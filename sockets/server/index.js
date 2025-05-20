@@ -19,6 +19,9 @@ const io = new Server(server, {
 // Estructura para almacenar las salas
 const rooms = new Map();
 
+// Set global para nicknames activos (en cualquier sala)
+const activeNicknames = new Set();
+
 // Función para obtener lista de salas disponibles (no llenas)
 function getAvailableRooms() {
   const availableRooms = [];
@@ -53,7 +56,8 @@ io.on('connection', (socket) => {
     ip: require('os').networkInterfaces().Ethernet?.[0]?.address || '127.0.0.1'
   };
   socket.emit('host_info', hostInfo);
-    // Evento para solicitar salas disponibles
+  
+  // Evento para solicitar salas disponibles
   socket.on('get_available_rooms', () => {
     socket.emit('available_rooms', getAvailableRooms());
   });
@@ -67,15 +71,20 @@ io.on('connection', (socket) => {
         Array.from(room.participants.values()) : [];
       socket.emit('room_participants', participants);
     }
-  });  // Nueva funcionalidad para crear una sala
+  });
+  
+  // Nueva funcionalidad para crear una sala
   socket.on('create_room', ({ maxParticipants, roomNumber, nickname }) => {
-    const pin = generateUniquePin();
-    
-    // Si por alguna razón hubiera un temporizador para este PIN (aunque debería ser nuevo)
-    if (roomTimers.has(pin)) {
-      clearTimeout(roomTimers.get(pin));
-      roomTimers.delete(pin);
+    // Verificar si el nickname ya está en uso globalmente
+    if (activeNicknames.has(nickname)) {
+      socket.emit('join_error', { message: 'Este usuario ya está en una sala o en uso en otro dispositivo/navegador.' });
+      return;
     }
+    
+    // Registrar nickname como activo
+    activeNicknames.add(nickname);
+    
+    const pin = generateUniquePin();
     
     rooms.set(pin, {
       number: roomNumber || 'Sin número',  // Número de sala personalizado
@@ -107,8 +116,15 @@ io.on('connection', (socket) => {
     
     console.log(`Sala #${roomNumber} creada con PIN: ${pin}, límite: ${maxParticipants} usuarios`);
   });
+  
   // Unirse a una sala existente
   socket.on('join_room', ({ pin, nickname }) => {
+    // Verificar si el nickname ya está en uso globalmente
+    if (activeNicknames.has(nickname)) {
+      socket.emit('join_error', { message: 'Este usuario ya está en una sala o en uso en otro dispositivo/navegador.' });
+      return;
+    }
+    
     // Verificar si la sala existe
     if (!rooms.has(pin)) {
       socket.emit('join_error', { message: 'La sala no existe. Verifica el PIN e intenta nuevamente.' });
@@ -123,12 +139,8 @@ io.on('connection', (socket) => {
       return;
     }
     
-    // Si hay un temporizador para eliminar esta sala, lo cancelamos
-    if (roomTimers.has(pin)) {
-      clearTimeout(roomTimers.get(pin));
-      roomTimers.delete(pin);
-      console.log(`Temporizador de eliminación cancelado para la sala ${pin} porque un usuario se ha unido`);
-    }
+    // Registrar nickname como activo
+    activeNicknames.add(nickname);
     
     // Guardar el nickname en el socket
     socket.nickname = nickname;
@@ -155,11 +167,11 @@ io.on('connection', (socket) => {
     socket.emit('room_history', room.messages);
     
     // Enviar lista de participantes
-    io.to(pin).emit('room_participants', participantsList);    io.to(pin).emit('room_participants', participantsList);
-    
-    // Notificar a todos en la sala sobre el nuevo usuario
+    io.to(pin).emit('room_participants', participantsList);
+      // Notificar a todos en la sala sobre el nuevo usuario
     io.to(pin).emit('user_joined', { 
       nickname, 
+      pin, // Añadimos explícitamente el pin para que nunca falte
       roomNumber: room.number || 'Sin número',
       currentParticipants: room.participants.size,
       maxParticipants: room.maxParticipants
@@ -187,9 +199,13 @@ io.on('connection', (socket) => {
   // Salir de una sala
   socket.on('leave_room', () => {
     leaveCurrentRoom(socket);
-  });  // Almacenar los temporizadores de cierre de salas
-  const roomTimers = new Map();
-  
+    
+    // Liberar nickname globalmente
+    if (socket.nickname) {
+      activeNicknames.delete(socket.nickname);
+    }
+  });
+
   // Función para manejar la salida de una sala
   function leaveCurrentRoom(socket) {
     const pin = socket.currentRoom;
@@ -206,10 +222,10 @@ io.on('connection', (socket) => {
       // Obtener la lista actualizada de participantes
       const participantsList = room.participants instanceof Map ? 
         Array.from(room.participants.values()) : [];
-      
-      // Notificar a todos los usuarios restantes
+        // Notificar a todos los usuarios restantes
       io.to(pin).emit('user_left', { 
         nickname: socket.nickname,
+        pin, // Añadimos explícitamente el pin para que nunca falte
         roomNumber: room.number || 'Sin número',
         currentParticipants: room.participants.size,
         maxParticipants: room.maxParticipants
@@ -218,37 +234,26 @@ io.on('connection', (socket) => {
       // Enviar la lista actualizada de participantes
       io.to(pin).emit('room_participants', participantsList);
         
-      // Si la sala quedó vacía, configurar un temporizador para eliminarla
+      // Si la sala quedó vacía, eliminarla inmediatamente
       if (room.participants.size === 0) {
-        // Si ya existe un temporizador para esta sala, lo limpiamos
-        if (roomTimers.has(pin)) {
-          clearTimeout(roomTimers.get(pin));
-        }
+        rooms.delete(pin);
+        console.log(`Sala ${pin} eliminada inmediatamente por quedar vacía`);
         
-        // Crear un nuevo temporizador (30 segundos para dar tiempo a reconexión)
-        console.log(`Sala ${pin} vacía. Se eliminará en 30 segundos si nadie se conecta.`);
-        const timerId = setTimeout(() => {
-          // Verificar que la sala siga existiendo y esté vacía
-          if (rooms.has(pin) && rooms.get(pin).participants.size === 0) {
-            rooms.delete(pin);
-            roomTimers.delete(pin);
-            console.log(`Sala ${pin} eliminada por quedar vacía después del tiempo de espera`);
-            
-            // Notificar a todos sobre la actualización de salas disponibles
-            io.emit('available_rooms', getAvailableRooms());
-          }
-        }, 30000); // 30 segundos de espera
-        
-        // Guardar el ID del temporizador
-        roomTimers.set(pin, timerId);
+        // Notificar a todos sobre la actualización de salas disponibles
+        io.emit('available_rooms', getAvailableRooms());
+      } else {
+        // Notificar a todos sobre la actualización de salas disponibles
+        io.emit('available_rooms', getAvailableRooms());
       }
-      
-      // Notificar a todos sobre la actualización de salas disponibles
-      io.emit('available_rooms', getAvailableRooms());
       
       // Hacer que el socket abandone la sala
       socket.leave(pin);
       socket.currentRoom = null;
+      
+      // Liberar nickname globalmente
+      if (socket.nickname) {
+        activeNicknames.delete(socket.nickname);
+      }
       
       console.log(`Usuario ${socket.nickname} (${socket.id}) abandonó la sala ${pin}`);
     }
@@ -257,6 +262,11 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log(`Usuario desconectado: ${socket.id}`);
     leaveCurrentRoom(socket);
+    
+    // Liberar nickname globalmente
+    if (socket.nickname) {
+      activeNicknames.delete(socket.nickname);
+    }
   });
 });
 

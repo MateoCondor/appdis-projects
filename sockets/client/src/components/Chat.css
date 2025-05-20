@@ -38,6 +38,15 @@
   border-bottom: 1px solid #e2e8f0;
 }
 
+/* Header de la sala fijo */
+.chat-app-static-header .static-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f0f4f8;
+  border-bottom: 1px solid #dce7f1;
+}
+
 /* Contenedor de mensajes */
 .messages-container {
   flex: 1;
@@ -49,6 +58,18 @@
   background-color: #f8fafc;
   height: calc(100% - 150px); /* Restar altura de cabecera, info de sala y área de input */
   max-height: 500px;
+}
+
+/* Área de mensajes desplazable debajo del header */
+.messages-scrollable {
+  flex: 1;
+  overflow-y: auto;
+  background-color: #f8fafc;
+  padding: 0;
+  min-height: 0;
+  max-height: 500px;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Estilos base para los mensajes */
