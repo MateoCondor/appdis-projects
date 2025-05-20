@@ -1,0 +1,50 @@
+# Dependencias
+node_modules/
+/node_modules
+/.pnp
+.pnp.js
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Archivos de respaldo
+*.backup
+index.js.backup
+
+# Variables de entorno
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+
+# Directorios de caché
+.npm
+.cache/
+
+# Directorios de cobertura
+coverage/
+
+# Directorios de construcción/distribución
+/build
+/dist
+
+# Archivos temporales
+/tmp
+/temp
+
+# IDE y editores
+/.idea
+.project
+.classpath
+.vscode/
+*.swp
+*.swo
